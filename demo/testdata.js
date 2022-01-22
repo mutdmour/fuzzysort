@@ -134632,4 +134632,12 @@ var testdata = {
     ]
 }
 
-if(typeof module!=='undefined' && module.exports) module.exports = testdata
+var testdata_prepared = {}; var testdata_obj = {}
+for(var key of Object.keys(testdata)) {
+  testdata_prepared[key] = new Array(testdata[key].length)
+  for(var i = testdata[key].length-1; i>=0; i-=1) {
+    testdata_prepared[key][i] = fuzzysort.prepare(testdata[key][i])
+  }
+}
+
+// if(typeof module!=='undefined' && module.exports) module.exports = testdata
