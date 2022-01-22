@@ -67,6 +67,7 @@
     }
 
     function cacheNextLevel(nextIndex=0) {
+			return; // disable caching
       setTimeout(function() {
         if(nextIndex >= cacheChars.length+testdatakeys.length) return
 
