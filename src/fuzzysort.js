@@ -12,6 +12,19 @@ USAGE:
     fuzzysort.highlight(fuzzysort.single('fs', 'Fuzzy Search'), '<b>', '</b>')
     // <b>F</b>uzzy <b>S</b>earch
 */
+function prepareLowerCodes(str) {
+    var strLen = str.length;
+    var lowerCodes = []; // new Array(strLen)    sparse array is too slow
+    var lower = str.toLowerCase();
+    for (var i = 0; i < strLen; ++i)
+        lowerCodes[i] = lower.charCodeAt(i);
+    return lowerCodes;
+}
+function prepareSearch(search) {
+    if (!search)
+        return;
+    return prepareLowerCodes(search);
+}
 function prepareBeginningIndexes(target) {
     var targetLen = target.length;
     var beginningIndexes = [];
@@ -180,7 +193,7 @@ function rank(searchLowerCodes, prepared, searchLowerCode, matchesSimple, matche
     }
 }
 function rankNoTypo(searchLowerCodes, prepared, searchLowerCode, matchesSimple, matchesStrict) {
-    console.log('algorithmNoTypo', searchLowerCode, prepared, searchLowerCode);
+    // console.log('algorithmNoTypo', searchLowerCode, prepared, searchLowerCode);
     var targetLowerCodes = prepared._targetLowerCodes;
     var searchLen = searchLowerCodes.length;
     var targetLen = targetLowerCodes.length;
@@ -303,7 +316,7 @@ function rankNoTypo(searchLowerCodes, prepared, searchLowerCode, matchesSimple, 
                 console.log('go', search, target, options);
                 if (!search)
                     return noResults;
-                search = fuzzysort.prepareSearch(search);
+                search = prepareSearch(search);
                 var searchLowerCode = search[0];
                 var threshold = options && options.threshold || instanceOptions && instanceOptions.threshold || -9007199254740991;
                 var limit = options && options.limit || instanceOptions && instanceOptions.limit || 9007199254740991;
@@ -417,7 +430,7 @@ function rankNoTypo(searchLowerCodes, prepared, searchLowerCode, matchesSimple, 
                 var p = new Promise(function (resolve, reject) {
                     if (!search)
                         return resolve(noResults);
-                    search = fuzzysort.prepareSearch(search);
+                    search = prepareSearch(search);
                     var searchLowerCode = search[0];
                     var q = fastpriorityqueue();
                     var iCurrent = targets.length - 1;
@@ -593,18 +606,12 @@ function rankNoTypo(searchLowerCodes, prepared, searchLowerCode, matchesSimple, 
             prepare: function (target) {
                 if (!target)
                     return;
-                return { target: target, _targetLowerCodes: fuzzysort.prepareLowerCodes(target), _nextBeginningIndexes: null, score: null, indexes: null, obj: null }; // hidden
+                return { target: target, _targetLowerCodes: prepareLowerCodes(target), _nextBeginningIndexes: null, score: null, indexes: null, obj: null }; // hidden
             },
-            prepareSlow: function (target) {
-                if (!target)
-                    return;
-                return { target: target, _targetLowerCodes: fuzzysort.prepareLowerCodes(target), _nextBeginningIndexes: fuzzysort.prepareNextBeginningIndexes(target), score: null, indexes: null, obj: null }; // hidden
-            },
-            prepareSearch: function (search) {
-                if (!search)
-                    return;
-                return fuzzysort.prepareLowerCodes(search);
-            },
+            // prepareSlow: function (target) {
+            // 	if (!target) return
+            // 	return { target: target, _targetLowerCodes: prepareLowerCodes(target), _nextBeginningIndexes: prepareNextBeginningIndexes(target), score: null, indexes: null, obj: null } // hidden
+            // },
             // Below this point is only internal code
             // Below this point is only internal code
             // Below this point is only internal code
@@ -621,11 +628,11 @@ function rankNoTypo(searchLowerCodes, prepared, searchLowerCode, matchesSimple, 
             },
             getPreparedSearch: function (search) {
                 if (search.length > 999)
-                    return fuzzysort.prepareSearch(search); // don't cache huge searches
+                    return prepareSearch(search); // don't cache huge searches
                 var searchPrepared = preparedSearchCache.get(search);
                 if (searchPrepared !== undefined)
                     return searchPrepared;
-                searchPrepared = fuzzysort.prepareSearch(search);
+                searchPrepared = prepareSearch(search);
                 preparedSearchCache.set(search, searchPrepared);
                 return searchPrepared;
             },
@@ -634,50 +641,6 @@ function rankNoTypo(searchLowerCodes, prepared, searchLowerCode, matchesSimple, 
             },
             algorithmNoTypo: function (searchLowerCodes, prepared, searchLowerCode) {
                 return rankNoTypo(searchLowerCodes, prepared, searchLowerCode, matchesSimple, matchesStrict);
-            },
-            prepareLowerCodes: function (str) {
-                var strLen = str.length;
-                var lowerCodes = []; // new Array(strLen)    sparse array is too slow
-                var lower = str.toLowerCase();
-                for (var i = 0; i < strLen; ++i)
-                    lowerCodes[i] = lower.charCodeAt(i);
-                return lowerCodes;
-            },
-            prepareBeginningIndexes: function (target) {
-                var targetLen = target.length;
-                var beginningIndexes = [];
-                var beginningIndexesLen = 0;
-                var wasUpper = false;
-                var wasAlphanum = false;
-                for (var i = 0; i < targetLen; ++i) {
-                    var targetCode = target.charCodeAt(i);
-                    var isUpper = targetCode >= 65 && targetCode <= 90;
-                    var isAlphanum = isUpper || targetCode >= 97 && targetCode <= 122 || targetCode >= 48 && targetCode <= 57;
-                    var isBeginning = isUpper && !wasUpper || !wasAlphanum || !isAlphanum;
-                    wasUpper = isUpper;
-                    wasAlphanum = isAlphanum;
-                    if (isBeginning)
-                        beginningIndexes[beginningIndexesLen++] = i;
-                }
-                return beginningIndexes;
-            },
-            prepareNextBeginningIndexes: function (target) {
-                console.log('prepareNextBeginningIndexes', target);
-                var targetLen = target.length;
-                var beginningIndexes = fuzzysort.prepareBeginningIndexes(target);
-                var nextBeginningIndexes = []; // new Array(targetLen)     sparse array is too slow
-                var lastIsBeginning = beginningIndexes[0];
-                var lastIsBeginningI = 0;
-                for (var i = 0; i < targetLen; ++i) {
-                    if (lastIsBeginning > i) {
-                        nextBeginningIndexes[i] = lastIsBeginning;
-                    }
-                    else {
-                        lastIsBeginning = beginningIndexes[++lastIsBeginningI];
-                        nextBeginningIndexes[i] = lastIsBeginning === undefined ? targetLen : lastIsBeginning;
-                    }
-                }
-                return nextBeginningIndexes;
             },
             cleanup: cleanup,
             "new": fuzzysortNew

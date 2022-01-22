@@ -22,6 +22,19 @@ type Prepared = {
 	_targetLowerCodes: number[]
 };
 
+function prepareLowerCodes(str: string): number[] {
+	var strLen = str.length
+	var lowerCodes: number[] = [] // new Array(strLen)    sparse array is too slow
+	var lower = str.toLowerCase()
+	for (var i = 0; i < strLen; ++i) lowerCodes[i] = lower.charCodeAt(i)
+	return lowerCodes
+}
+
+function prepareSearch(search): number[] {
+	if (!search) return;
+	return prepareLowerCodes(search)
+}
+
 function prepareBeginningIndexes(target: string): number[] {
 	var targetLen = target.length
 	var beginningIndexes: number[] = []; var beginningIndexesLen = 0
@@ -274,7 +287,7 @@ function rankNoTypo(searchLowerCodes: number[], prepared: Prepared, searchLowerC
 			go: function (search, targets, options) {
 				console.log('go', search, target, options);
 				if (!search) return noResults
-				search = fuzzysort.prepareSearch(search)
+				search = prepareSearch(search)
 				var searchLowerCode = search[0]
 
 				var threshold = options && options.threshold || instanceOptions && instanceOptions.threshold || -9007199254740991
@@ -368,7 +381,7 @@ function rankNoTypo(searchLowerCodes: number[], prepared: Prepared, searchLowerC
 				var canceled = false
 				var p = new Promise(function (resolve, reject) {
 					if (!search) return resolve(noResults)
-					search = fuzzysort.prepareSearch(search)
+					search = prepareSearch(search)
 					var searchLowerCode = search[0]
 
 					var q = fastpriorityqueue()
@@ -527,17 +540,12 @@ function rankNoTypo(searchLowerCodes: number[], prepared: Prepared, searchLowerC
 
 			prepare: function (target) {
 				if (!target) return
-				return { target: target, _targetLowerCodes: fuzzysort.prepareLowerCodes(target), _nextBeginningIndexes: null, score: null, indexes: null, obj: null } // hidden
+				return { target: target, _targetLowerCodes: prepareLowerCodes(target), _nextBeginningIndexes: null, score: null, indexes: null, obj: null } // hidden
 			},
-			prepareSlow: function (target) {
-				if (!target) return
-				return { target: target, _targetLowerCodes: fuzzysort.prepareLowerCodes(target), _nextBeginningIndexes: prepareNextBeginningIndexes(target), score: null, indexes: null, obj: null } // hidden
-			},
-			prepareSearch: function (search) {
-				if (!search) return
-				return fuzzysort.prepareLowerCodes(search)
-			},
-
+			// prepareSlow: function (target) {
+			// 	if (!target) return
+			// 	return { target: target, _targetLowerCodes: prepareLowerCodes(target), _nextBeginningIndexes: prepareNextBeginningIndexes(target), score: null, indexes: null, obj: null } // hidden
+			// },
 
 
 			// Below this point is only internal code
@@ -556,10 +564,10 @@ function rankNoTypo(searchLowerCodes: number[], prepared: Prepared, searchLowerC
 				return targetPrepared
 			},
 			getPreparedSearch: function (search) {
-				if (search.length > 999) return fuzzysort.prepareSearch(search) // don't cache huge searches
+				if (search.length > 999) return prepareSearch(search) // don't cache huge searches
 				var searchPrepared = preparedSearchCache.get(search)
 				if (searchPrepared !== undefined) return searchPrepared
-				searchPrepared = fuzzysort.prepareSearch(search)
+				searchPrepared = prepareSearch(search)
 				preparedSearchCache.set(search, searchPrepared)
 				return searchPrepared
 			},
@@ -570,14 +578,6 @@ function rankNoTypo(searchLowerCodes: number[], prepared: Prepared, searchLowerC
 
 			algorithmNoTypo: function (searchLowerCodes, prepared, searchLowerCode) {
 				return rankNoTypo(searchLowerCodes, prepared, searchLowerCode, matchesSimple, matchesStrict);
-			},
-
-			prepareLowerCodes: function (str) {
-				var strLen = str.length
-				var lowerCodes = [] // new Array(strLen)    sparse array is too slow
-				var lower = str.toLowerCase()
-				for (var i = 0; i < strLen; ++i) lowerCodes[i] = lower.charCodeAt(i)
-				return lowerCodes
 			},
 			cleanup: cleanup,
 			new: fuzzysortNew,
