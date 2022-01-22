@@ -1,4 +1,13 @@
-// fuzzysort = require('./fuzzysort')
+console.log('yo');
+var assert = require('assert');
+describe('Array', function() {
+  describe('#indexOf()', function() {
+    it('should return -1 when the value is not present', function() {
+      assert.equal([1, 2, 3].indexOf(4), -1);
+    });
+  });
+});
+var fuzzysort = require('../src/fuzzysort')
 // Benchmark = require('benchmark')
 // Benchmark.options.maxTime = 2
 // const suite = new Benchmark.Suite
