@@ -65,7 +65,8 @@ setTimeout(async function() {
   if(assert.count==0) console.log('testing disabled!')
   else if(!assert.failed) console.log('all tests passed')
 
-  if(isNode) bench() // Only bench on node. Don't want the demo to freeze
+	// todo 
+  // if(isNode) bench() // Only bench on node. Don't want the demo to freeze
 })
 
 
@@ -200,7 +201,7 @@ async function tests() {
 
 
 const isNode = typeof require !== 'undefined' && typeof window === 'undefined'
-if(isNode) fuzzysort = require('./fuzzysort')
+if(isNode) fuzzysort = require('../src/fuzzysort')
 
 // Config
   fuzzysort = fuzzysort.new({
