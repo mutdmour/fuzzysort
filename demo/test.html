@@ -62,7 +62,7 @@
 
       } else { // Sync
         startms = Date.now()
-        renderResults(fuzzysort.go(inputValue, testdata_prepared[testdatakey]))
+        renderResults(fuzzysort.go(inputValue, testdata_prepared[testdatakey], {allowTypo: false}))
       }
     }
 
