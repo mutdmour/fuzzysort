@@ -105,8 +105,9 @@
       return html
     }
     function renderResults(results) {
+			console.log('results', results);
       const duration = Date.now() - startms
-      const header = `<p>${results.total} matches in ${duration}ms</p>`
+      const header = `<p>${results.length} matches in ${duration}ms</p>`
       const html = resultsToHtml(results)
 
       if(cache[testdatakey]===undefined) cache[testdatakey] = {}

@@ -13,14 +13,59 @@ USAGE:
 	// <b>F</b>uzzy <b>S</b>earch
 */
 
-type Prepared = {
+type Result = {
 	indexes: number[],
 	obj: null,
-	score: number,
+	score: null | number,
 	target: string,
-	_nextBeginningIndexes: number[],
+	_nextBeginningIndexes: null | number[],
 	_targetLowerCodes: number[]
 };
+
+type Options = {
+	allowTypo?: boolean;
+	threshold?: number;
+	limit?: number;
+	keys?: string[];
+	key?: string;
+	scoreFn?: (a: Result) => number;
+};
+
+declare class FastPriorityQueue<T> {
+  /** The provided comparator function should take a, b and return *true* when a < b. */
+  constructor(comparator?: (a: T, b: T) => boolean);
+  /** Add an element into the queue. Runs in O(log n) time. */
+  add: (value: T) => void;
+  /** Copy the priority queue into another, and return it. Queue items are shallow-copied. Runs in `O(n)` time. */
+  clone: () => FastPriorityQueue<T>;
+  /** Iterate over the items in order. */
+  forEach: (callback: (value: T, index: number) => void) => void;
+  /** Replace the content of the heap by provided array and "heapify it." */
+  heapify: (array: T[]) => void;
+  /** Check whether the heap is empty. */
+  isEmpty: () => boolean;
+  /** Look at the top of the queue (the smallest element) without removing it. Executes in constant time. */
+  peek: () => T | undefined;
+  /** Remove the element on top of the heap (the smallest element). Runs in logarithmic time */
+  poll: () => T | undefined;
+  /** Remove an element matching the provided value from the queue, checked for equality by using the queue's comparator. Return true if removed, false otherwise. */
+  remove: (value: T) => boolean;
+  /** Remove the first item for which the callback will return true. Return the removed item, or undefined if nothing is removed. */
+  removeMany: (callback: (a: T) => boolean, limit?: number) => T[];
+  /**
+   * Remove each item for which the callback returns true, up to a max limit of removed items if specified or no limit if unspecified.
+   * Return an array containing the removed items.
+   */
+  removeOne: (callback: (a: T) => boolean) => T | undefined;
+  /** Add the provided value to the heap while removing and returning the smallest value. The size of the queue thus remains unchanged. */
+  replaceTop: (value: T) => T | undefined;
+  /** The number of elements in the queue. */
+  size: number;
+  /** Recover unused memory (for long-running priority queues). */
+  trim: () => void;
+  /** return the k 'smallest' elements of the queue */
+  kSmallest: (k: number) => T[];
+}
 
 function prepareLowerCodes(str: string): number[] {
 	var strLen = str.length
@@ -33,6 +78,17 @@ function prepareLowerCodes(str: string): number[] {
 function prepareSearch(search): number[] {
 	if (!search) return;
 	return prepareLowerCodes(search)
+}
+
+function defaultScoreFn(a) {
+	var max = -9007199254740991
+	for (var i = a.length - 1; i >= 0; --i) {
+		var result = a[i]; if (result === null) continue
+		var score = result.score
+		if (score > max) max = score
+	}
+	if (max === -9007199254740991) return null
+	return max
 }
 
 function prepareBeginningIndexes(target: string): number[] {
@@ -69,7 +125,19 @@ function prepareNextBeginningIndexes(target: string): number[] {
 	return nextBeginningIndexes
 }
 
-function rank(searchLowerCodes: number[], prepared: Prepared, searchLowerCode: number, matchesSimple: number[], matchesStrict: number[]) {
+function prepareTarget(target: string): Result | null {
+	if (!target) return null;
+	return {
+		target: target,
+		score: null,
+		indexes: null,
+		obj: null,
+		_targetLowerCodes: prepareLowerCodes(target),
+		_nextBeginningIndexes: null,
+	}; // hidden
+}
+
+function rank(searchLowerCodes: number[], prepared: Result, searchLowerCode: number, matchesSimple: number[], matchesStrict: number[]) {
 	// console.log('algorithm', searchLowerCode, prepared, searchLowerCode);
 	var targetLowerCodes = prepared._targetLowerCodes
 	var searchLen = searchLowerCodes.length
@@ -180,7 +248,7 @@ function rank(searchLowerCodes: number[], prepared: Prepared, searchLowerCode: n
 	}
 }
 
-function rankNoTypo(searchLowerCodes: number[], prepared: Prepared, searchLowerCode: number, matchesSimple: number[], matchesStrict: number[]) {
+function rankNoTypo(searchLowerCodes: number[], prepared: Result, searchLowerCode: number, matchesSimple: number[], matchesStrict: number[]) {
 	// console.log('algorithmNoTypo', searchLowerCode, prepared, searchLowerCode);
 	var targetLowerCodes = prepared._targetLowerCodes
 	var searchLen = searchLowerCodes.length
@@ -257,11 +325,46 @@ function rankNoTypo(searchLowerCodes: number[], prepared: Prepared, searchLowerC
 
 // UMD (Universal Module Definition) for fuzzysort
 ; (function (root, UMD) {
-	if (typeof define === 'function' && define.amd) define([], UMD)
-	else if (typeof module === 'object' && module.exports) module.exports = UMD()
-	else root.fuzzysort = UMD()
+	// if (typeof define === 'function' && define.amd) define([], UMD)
+	// else if (typeof module === 'object' && module.exports) module.exports = UMD()
+	// else root.fuzzysort = UMD()
+	root.fuzzysort = UMD();
 })(this, function UMD() {
-	function fuzzysortNew(instanceOptions) {
+	// This stuff is outside fuzzysortNew, because it's shared with instances of fuzzysort.new()
+	var isNode = typeof require !== 'undefined' && typeof window === 'undefined'
+	// var MAX_INT = Number.MAX_SAFE_INTEGER
+	// var MIN_INT = Number.MIN_VALUE
+	var preparedCache = new Map()
+	var preparedSearchCache = new Map()
+	var noResults = [];
+	noResults.total = 0;
+	var matchesSimple = []; var matchesStrict = []
+	function cleanup() { preparedCache.clear(); preparedSearchCache.clear(); matchesSimple = []; matchesStrict = [] }
+
+
+	// prop = 'key'              2.5ms optimized for this case, seems to be about as fast as direct obj[prop]
+	// prop = 'key1.key2'        10ms
+	// prop = ['key1', 'key2']   27ms
+	function getValue(obj, prop) {
+		var tmp = obj[prop]; if (tmp !== undefined) return tmp
+		var segs = prop
+		if (!Array.isArray(prop)) segs = prop.split('.')
+		var len = segs.length
+		var i = -1
+		while (obj && (++i < len)) obj = obj[segs[i]]
+		return obj
+	}
+
+	function isObj(x) { return typeof x === 'object' } // faster as a function
+
+	// Hacked version of https://github.com/lemire/FastPriorityQueue.js
+	var fastpriorityqueue = function () { var r = [], o = 0, e = {}; function n() { for (var e = 0, n = r[e], c = 1; c < o;) { var f = c + 1; e = c, f < o && r[f].score < r[c].score && (e = f), r[e - 1 >> 1] = r[e], c = 1 + (e << 1) } for (var a = e - 1 >> 1; e > 0 && n.score < r[a].score; a = (e = a) - 1 >> 1)r[e] = r[a]; r[e] = n } return e.add = function (e) { var n = o; r[o++] = e; for (var c = n - 1 >> 1; n > 0 && e.score < r[c].score; c = (n = c) - 1 >> 1)r[n] = r[c]; r[n] = e }, e.poll = function () { if (0 !== o) { var e = r[0]; return r[0] = r[--o], n(), e } }, e.peek = function (e) { if (0 !== o) return r[0] }, e.replaceTop = function (o) { r[0] = o, n() }, e };
+	var q = fastpriorityqueue() as FastPriorityQueue<any>; // reuse this, except for async, it needs to make its own
+
+	return fuzzysortNew()
+
+
+	function fuzzysortNew(instanceOptions?: Options) {
 
 		var fuzzysort = {
 
@@ -284,10 +387,10 @@ function rankNoTypo(searchLowerCodes: number[], prepared: Prepared, searchLowerC
 				// return result
 			},
 
-			go: function (search, targets, options) {
-				console.log('go', search, target, options);
-				if (!search) return noResults
-				search = prepareSearch(search)
+			go: function (searchTarget: string, targets, options?: Options): Result[] {
+				console.log('go', searchTarget, targets, options);
+				if (!searchTarget) return noResults;
+				const search = prepareSearch(searchTarget)
 				var searchLowerCode = search[0]
 
 				var threshold = options && options.threshold || instanceOptions && instanceOptions.threshold || -9007199254740991
@@ -538,9 +641,8 @@ function rankNoTypo(searchLowerCodes: number[], prepared: Prepared, searchLowerC
 				return highlighted
 			},
 
-			prepare: function (target) {
-				if (!target) return
-				return { target: target, _targetLowerCodes: prepareLowerCodes(target), _nextBeginningIndexes: null, score: null, indexes: null, obj: null } // hidden
+			prepare: function (target: string): Result | null {
+				return prepareTarget(target);
 			},
 			// prepareSlow: function (target) {
 			// 	if (!target) return
@@ -549,21 +651,15 @@ function rankNoTypo(searchLowerCodes: number[], prepared: Prepared, searchLowerC
 
 
 			// Below this point is only internal code
-			// Below this point is only internal code
-			// Below this point is only internal code
-			// Below this point is only internal code
-
-
-
-			getPrepared: function (target) {
-				if (target.length > 999) return fuzzysort.prepare(target) // don't cache huge targets
+			getPrepared: function (target: string): Result | null {
+				if (target.length > 999) return prepareTarget(target) // don't cache huge targets
 				var targetPrepared = preparedCache.get(target)
 				if (targetPrepared !== undefined) return targetPrepared
-				targetPrepared = fuzzysort.prepare(target)
+				targetPrepared = prepareTarget(target)
 				preparedCache.set(target, targetPrepared)
 				return targetPrepared
 			},
-			getPreparedSearch: function (search) {
+			getPreparedSearch: function (search: string): number[] {
 				if (search.length > 999) return prepareSearch(search) // don't cache huge searches
 				var searchPrepared = preparedSearchCache.get(search)
 				if (searchPrepared !== undefined) return searchPrepared
@@ -572,11 +668,11 @@ function rankNoTypo(searchLowerCodes: number[], prepared: Prepared, searchLowerC
 				return searchPrepared
 			},
 
-			algorithm: function (searchLowerCodes, prepared, searchLowerCode) {
+			algorithm: function (searchLowerCodes: number[], prepared: Result, searchLowerCode: number) {
 				return rank(searchLowerCodes, prepared, searchLowerCode, matchesSimple, matchesStrict);
 			},
 
-			algorithmNoTypo: function (searchLowerCodes, prepared, searchLowerCode) {
+			algorithmNoTypo: function (searchLowerCodes: number[], prepared: Result, searchLowerCode: number) {
 				return rankNoTypo(searchLowerCodes, prepared, searchLowerCode, matchesSimple, matchesStrict);
 			},
 			cleanup: cleanup,
@@ -585,46 +681,6 @@ function rankNoTypo(searchLowerCodes: number[], prepared: Prepared, searchLowerC
 		return fuzzysort
 	} // fuzzysortNew
 
-	// This stuff is outside fuzzysortNew, because it's shared with instances of fuzzysort.new()
-	var isNode = typeof require !== 'undefined' && typeof window === 'undefined'
-	// var MAX_INT = Number.MAX_SAFE_INTEGER
-	// var MIN_INT = Number.MIN_VALUE
-	var preparedCache = new Map()
-	var preparedSearchCache = new Map()
-	var noResults = []; noResults.total = 0
-	var matchesSimple = []; var matchesStrict = []
-	function cleanup() { preparedCache.clear(); preparedSearchCache.clear(); matchesSimple = []; matchesStrict = [] }
-	function defaultScoreFn(a) {
-		var max = -9007199254740991
-		for (var i = a.length - 1; i >= 0; --i) {
-			var result = a[i]; if (result === null) continue
-			var score = result.score
-			if (score > max) max = score
-		}
-		if (max === -9007199254740991) return null
-		return max
-	}
-
-	// prop = 'key'              2.5ms optimized for this case, seems to be about as fast as direct obj[prop]
-	// prop = 'key1.key2'        10ms
-	// prop = ['key1', 'key2']   27ms
-	function getValue(obj, prop) {
-		var tmp = obj[prop]; if (tmp !== undefined) return tmp
-		var segs = prop
-		if (!Array.isArray(prop)) segs = prop.split('.')
-		var len = segs.length
-		var i = -1
-		while (obj && (++i < len)) obj = obj[segs[i]]
-		return obj
-	}
-
-	function isObj(x) { return typeof x === 'object' } // faster as a function
-
-	// Hacked version of https://github.com/lemire/FastPriorityQueue.js
-	var fastpriorityqueue = function () { var r = [], o = 0, e = {}; function n() { for (var e = 0, n = r[e], c = 1; c < o;) { var f = c + 1; e = c, f < o && r[f].score < r[c].score && (e = f), r[e - 1 >> 1] = r[e], c = 1 + (e << 1) } for (var a = e - 1 >> 1; e > 0 && n.score < r[a].score; a = (e = a) - 1 >> 1)r[e] = r[a]; r[e] = n } return e.add = function (e) { var n = o; r[o++] = e; for (var c = n - 1 >> 1; n > 0 && e.score < r[c].score; c = (n = c) - 1 >> 1)r[n] = r[c]; r[n] = e }, e.poll = function () { if (0 !== o) { var e = r[0]; return r[0] = r[--o], n(), e } }, e.peek = function (e) { if (0 !== o) return r[0] }, e.replaceTop = function (o) { r[0] = o, n() }, e };
-	var q = fastpriorityqueue() // reuse this, except for async, it needs to make its own
-
-	return fuzzysortNew()
 }) // UMD
 
 // TODO: (performance) wasm version!?

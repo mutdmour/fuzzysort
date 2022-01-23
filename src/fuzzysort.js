@@ -25,6 +25,20 @@ function prepareSearch(search) {
         return;
     return prepareLowerCodes(search);
 }
+function defaultScoreFn(a) {
+    var max = -9007199254740991;
+    for (var i = a.length - 1; i >= 0; --i) {
+        var result = a[i];
+        if (result === null)
+            continue;
+        var score = result.score;
+        if (score > max)
+            max = score;
+    }
+    if (max === -9007199254740991)
+        return null;
+    return max;
+}
 function prepareBeginningIndexes(target) {
     var targetLen = target.length;
     var beginningIndexes = [];
@@ -59,6 +73,18 @@ function prepareNextBeginningIndexes(target) {
         }
     }
     return nextBeginningIndexes;
+}
+function prepareTarget(target) {
+    if (!target)
+        return null;
+    return {
+        target: target,
+        score: null,
+        indexes: null,
+        obj: null,
+        _targetLowerCodes: prepareLowerCodes(target),
+        _nextBeginningIndexes: null
+    }; // hidden
 }
 function rank(searchLowerCodes, prepared, searchLowerCode, matchesSimple, matchesStrict) {
     // console.log('algorithm', searchLowerCode, prepared, searchLowerCode);
@@ -283,13 +309,51 @@ function rankNoTypo(searchLowerCodes, prepared, searchLowerCode, matchesSimple, 
 // UMD (Universal Module Definition) for fuzzysort
 ;
 (function (root, UMD) {
-    if (typeof define === 'function' && define.amd)
-        define([], UMD);
-    else if (typeof module === 'object' && module.exports)
-        module.exports = UMD();
-    else
-        root.fuzzysort = UMD();
+    // if (typeof define === 'function' && define.amd) define([], UMD)
+    // else if (typeof module === 'object' && module.exports) module.exports = UMD()
+    // else root.fuzzysort = UMD()
+    root.fuzzysort = UMD();
 })(this, function UMD() {
+    // This stuff is outside fuzzysortNew, because it's shared with instances of fuzzysort.new()
+    var isNode = typeof require !== 'undefined' && typeof window === 'undefined';
+    // var MAX_INT = Number.MAX_SAFE_INTEGER
+    // var MIN_INT = Number.MIN_VALUE
+    var preparedCache = new Map();
+    var preparedSearchCache = new Map();
+    var noResults = [];
+    var matchesSimple = [];
+    var matchesStrict = [];
+    function cleanup() { preparedCache.clear(); preparedSearchCache.clear(); matchesSimple = []; matchesStrict = []; }
+    // prop = 'key'              2.5ms optimized for this case, seems to be about as fast as direct obj[prop]
+    // prop = 'key1.key2'        10ms
+    // prop = ['key1', 'key2']   27ms
+    function getValue(obj, prop) {
+        var tmp = obj[prop];
+        if (tmp !== undefined)
+            return tmp;
+        var segs = prop;
+        if (!Array.isArray(prop))
+            segs = prop.split('.');
+        var len = segs.length;
+        var i = -1;
+        while (obj && (++i < len))
+            obj = obj[segs[i]];
+        return obj;
+    }
+    function isObj(x) { return typeof x === 'object'; } // faster as a function
+    // Hacked version of https://github.com/lemire/FastPriorityQueue.js
+    var fastpriorityqueue = function () { var r = [], o = 0, e = {}; function n() { for (var e = 0, n = r[e], c = 1; c < o;) {
+        var f = c + 1;
+        e = c, f < o && r[f].score < r[c].score && (e = f), r[e - 1 >> 1] = r[e], c = 1 + (e << 1);
+    } for (var a = e - 1 >> 1; e > 0 && n.score < r[a].score; a = (e = a) - 1 >> 1)
+        r[e] = r[a]; r[e] = n; } return e.add = function (e) { var n = o; r[o++] = e; for (var c = n - 1 >> 1; n > 0 && e.score < r[c].score; c = (n = c) - 1 >> 1)
+        r[n] = r[c]; r[n] = e; }, e.poll = function () { if (0 !== o) {
+        var e = r[0];
+        return r[0] = r[--o], n(), e;
+    } }, e.peek = function (e) { if (0 !== o)
+        return r[0]; }, e.replaceTop = function (o) { r[0] = o, n(); }, e; };
+    var q = fastpriorityqueue(); // reuse this, except for async, it needs to make its own
+    return fuzzysortNew();
     function fuzzysortNew(instanceOptions) {
         var fuzzysort = {
             single: function (search, target, options) {
@@ -312,11 +376,11 @@ function rankNoTypo(searchLowerCodes, prepared, searchLowerCode, matchesSimple, 
                 // if(result.score < threshold) return null
                 // return result
             },
-            go: function (search, targets, options) {
-                console.log('go', search, target, options);
-                if (!search)
+            go: function (searchTarget, targets, options) {
+                console.log('go', searchTarget, targets, options);
+                if (!searchTarget)
                     return noResults;
-                search = prepareSearch(search);
+                var search = prepareSearch(searchTarget);
                 var searchLowerCode = search[0];
                 var threshold = options && options.threshold || instanceOptions && instanceOptions.threshold || -9007199254740991;
                 var limit = options && options.limit || instanceOptions && instanceOptions.limit || 9007199254740991;
@@ -604,25 +668,20 @@ function rankNoTypo(searchLowerCodes, prepared, searchLowerCode, matchesSimple, 
                 return highlighted;
             },
             prepare: function (target) {
-                if (!target)
-                    return;
-                return { target: target, _targetLowerCodes: prepareLowerCodes(target), _nextBeginningIndexes: null, score: null, indexes: null, obj: null }; // hidden
+                return prepareTarget(target);
             },
             // prepareSlow: function (target) {
             // 	if (!target) return
             // 	return { target: target, _targetLowerCodes: prepareLowerCodes(target), _nextBeginningIndexes: prepareNextBeginningIndexes(target), score: null, indexes: null, obj: null } // hidden
             // },
             // Below this point is only internal code
-            // Below this point is only internal code
-            // Below this point is only internal code
-            // Below this point is only internal code
             getPrepared: function (target) {
                 if (target.length > 999)
-                    return fuzzysort.prepare(target); // don't cache huge targets
+                    return prepareTarget(target); // don't cache huge targets
                 var targetPrepared = preparedCache.get(target);
                 if (targetPrepared !== undefined)
                     return targetPrepared;
-                targetPrepared = fuzzysort.prepare(target);
+                targetPrepared = prepareTarget(target);
                 preparedCache.set(target, targetPrepared);
                 return targetPrepared;
             },
@@ -647,61 +706,6 @@ function rankNoTypo(searchLowerCodes, prepared, searchLowerCode, matchesSimple, 
         };
         return fuzzysort;
     } // fuzzysortNew
-    // This stuff is outside fuzzysortNew, because it's shared with instances of fuzzysort.new()
-    var isNode = typeof require !== 'undefined' && typeof window === 'undefined';
-    // var MAX_INT = Number.MAX_SAFE_INTEGER
-    // var MIN_INT = Number.MIN_VALUE
-    var preparedCache = new Map();
-    var preparedSearchCache = new Map();
-    var noResults = [];
-    noResults.total = 0;
-    var matchesSimple = [];
-    var matchesStrict = [];
-    function cleanup() { preparedCache.clear(); preparedSearchCache.clear(); matchesSimple = []; matchesStrict = []; }
-    function defaultScoreFn(a) {
-        var max = -9007199254740991;
-        for (var i = a.length - 1; i >= 0; --i) {
-            var result = a[i];
-            if (result === null)
-                continue;
-            var score = result.score;
-            if (score > max)
-                max = score;
-        }
-        if (max === -9007199254740991)
-            return null;
-        return max;
-    }
-    // prop = 'key'              2.5ms optimized for this case, seems to be about as fast as direct obj[prop]
-    // prop = 'key1.key2'        10ms
-    // prop = ['key1', 'key2']   27ms
-    function getValue(obj, prop) {
-        var tmp = obj[prop];
-        if (tmp !== undefined)
-            return tmp;
-        var segs = prop;
-        if (!Array.isArray(prop))
-            segs = prop.split('.');
-        var len = segs.length;
-        var i = -1;
-        while (obj && (++i < len))
-            obj = obj[segs[i]];
-        return obj;
-    }
-    function isObj(x) { return typeof x === 'object'; } // faster as a function
-    // Hacked version of https://github.com/lemire/FastPriorityQueue.js
-    var fastpriorityqueue = function () { var r = [], o = 0, e = {}; function n() { for (var e = 0, n = r[e], c = 1; c < o;) {
-        var f = c + 1;
-        e = c, f < o && r[f].score < r[c].score && (e = f), r[e - 1 >> 1] = r[e], c = 1 + (e << 1);
-    } for (var a = e - 1 >> 1; e > 0 && n.score < r[a].score; a = (e = a) - 1 >> 1)
-        r[e] = r[a]; r[e] = n; } return e.add = function (e) { var n = o; r[o++] = e; for (var c = n - 1 >> 1; n > 0 && e.score < r[c].score; c = (n = c) - 1 >> 1)
-        r[n] = r[c]; r[n] = e; }, e.poll = function () { if (0 !== o) {
-        var e = r[0];
-        return r[0] = r[--o], n(), e;
-    } }, e.peek = function (e) { if (0 !== o)
-        return r[0]; }, e.replaceTop = function (o) { r[0] = o, n(); }, e; };
-    var q = fastpriorityqueue(); // reuse this, except for async, it needs to make its own
-    return fuzzysortNew();
 }); // UMD
 // TODO: (performance) wasm version!?
 // TODO: (performance) layout memory in an optimal way to go fast by avoiding cache misses
